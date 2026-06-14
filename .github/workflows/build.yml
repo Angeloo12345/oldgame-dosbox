@@ -1,0 +1,35 @@
+name: build em-dosbox (memory-fixed)
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: deps
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config build-essential
+      - name: emsdk
+        uses: mymindstorm/setup-emsdk@v14
+      - name: clone em-dosbox (js-dos)
+        run: git clone --depth 1 https://github.com/js-dos/dosbox.git src-emdosbox
+      - name: inspect memory flags (kde se nastavuje pamet)
+        run: |
+          cd src-emdosbox
+          echo "=== TOTAL_MEMORY / ALLOW_MEMORY_GROWTH vyskyty ==="
+          grep -rn "TOTAL_MEMORY\|ALLOW_MEMORY_GROWTH\|INITIAL_MEMORY\|s MEMORY" --include=*.am --include=*.ac --include=Makefile* --include=configure* . | head -40 || echo "nenalezeno v build souborech"
+          echo "=== struktura ==="; ls -la; ls -la src 2>/dev/null | head
+      - name: build (wasm + memory growth)
+        continue-on-error: true
+        run: |
+          cd src-emdosbox
+          ./autogen.sh
+          emconfigure ./configure --enable-wasm
+          # zkus pribalit memory-growth pres EMCC_CFLAGS i LDFLAGS
+          export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1"
+          emmake make -j2 EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1" 2>&1 | tail -60
+      - name: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: emdosbox-out
+          path: |
+            src-emdosbox/src/*.wasm
+            src-emdosbox/src/*.js
+          if-no-files-found: warn

@@ -8,35 +8,41 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config build-essential
       - name: emsdk
         uses: mymindstorm/setup-emsdk@v14
+      - name: prebuild SDL1 port
+        run: embuilder build sdl || embuilder build libsdl || echo "(embuilder sdl skip)"
       - name: clone em-dosbox (js-dos)
         run: git clone --depth 1 https://github.com/js-dos/dosbox.git src-emdosbox
-      - name: fake sdl-config (SDL1 + memory growth přes emscripten port)
+      - name: patch configure.ac (vyřadit AC_MSG_ERROR Only libSDL 1.2.X)
+        run: |
+          cd src-emdosbox
+          sed -i 's/AC_MSG_ERROR(\[Only libSDL 1.2.X supported\])/AC_MSG_RESULT([forced-ok])/' configure.ac
+          echo "=== po patchi (kontrola) ==="; grep -n "1.2.X" configure.ac | head
+      - name: fake sdl-config (SDL1 + memory growth)
         run: |
           mkdir -p $HOME/fakebin
           cat > $HOME/fakebin/sdl-config <<'EOF'
           #!/bin/bash
           case "$1" in
             --version) echo 1.2.15 ;;
-            --cflags)  echo "-s USE_SDL=1" ;;
-            --libs)    echo "-s USE_SDL=1 -s ALLOW_MEMORY_GROWTH=1" ;;
+            --cflags)  echo "-sUSE_SDL=1" ;;
+            --libs)    echo "-sUSE_SDL=1 -sALLOW_MEMORY_GROWTH=1" ;;
             --prefix)  echo "$HOME/fakebin" ;;
             *) ;;
           esac
           EOF
           chmod +x $HOME/fakebin/sdl-config
           echo "$HOME/fakebin" >> $GITHUB_PATH
-      - name: configure + build (wasm + SDL1 + memory growth)
+      - name: configure + build
         continue-on-error: true
         run: |
           cd src-emdosbox
           export SDL_CONFIG="$HOME/fakebin/sdl-config"
           ./autogen.sh
-          emconfigure ./configure --enable-wasm SDL_CONFIG="$HOME/fakebin/sdl-config" 2>&1 | tail -25
+          emconfigure ./configure --enable-wasm SDL_CONFIG="$HOME/fakebin/sdl-config" CPPFLAGS="-sUSE_SDL=1" 2>&1 | tail -20
           echo "=== MAKE ==="
-          emmake make -j2 EMCC_CFLAGS="-s USE_SDL=1 -s ALLOW_MEMORY_GROWTH=1" 2>&1 | tail -80
+          emmake make -j2 CXXFLAGS="-O2 -sUSE_SDL=1" LDFLAGS="-sUSE_SDL=1 -sALLOW_MEMORY_GROWTH=1" 2>&1 | tail -90
       - name: list outputs
-        run: |
-          cd src-emdosbox && echo "=== .js/.wasm v src ===" && ls -la src/*.js src/*.wasm 2>/dev/null || echo "zatim nic"
+        run: cd src-emdosbox && (ls -la src/*.js src/*.wasm 2>/dev/null || echo "zatim nic")
       - name: artifact
         uses: actions/upload-artifact@v4
         with:

@@ -10,21 +10,33 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
       - name: clone em-dosbox (js-dos)
         run: git clone --depth 1 https://github.com/js-dos/dosbox.git src-emdosbox
-      - name: inspect memory flags (kde se nastavuje pamet)
+      - name: fake sdl-config (SDL1 + memory growth přes emscripten port)
         run: |
-          cd src-emdosbox
-          echo "=== TOTAL_MEMORY / ALLOW_MEMORY_GROWTH vyskyty ==="
-          grep -rn "TOTAL_MEMORY\|ALLOW_MEMORY_GROWTH\|INITIAL_MEMORY\|s MEMORY" --include=*.am --include=*.ac --include=Makefile* --include=configure* . | head -40 || echo "nenalezeno v build souborech"
-          echo "=== struktura ==="; ls -la; ls -la src 2>/dev/null | head
-      - name: build (wasm + memory growth)
+          mkdir -p $HOME/fakebin
+          cat > $HOME/fakebin/sdl-config <<'EOF'
+          #!/bin/bash
+          case "$1" in
+            --version) echo 1.2.15 ;;
+            --cflags)  echo "-s USE_SDL=1" ;;
+            --libs)    echo "-s USE_SDL=1 -s ALLOW_MEMORY_GROWTH=1" ;;
+            --prefix)  echo "$HOME/fakebin" ;;
+            *) ;;
+          esac
+          EOF
+          chmod +x $HOME/fakebin/sdl-config
+          echo "$HOME/fakebin" >> $GITHUB_PATH
+      - name: configure + build (wasm + SDL1 + memory growth)
         continue-on-error: true
         run: |
           cd src-emdosbox
+          export SDL_CONFIG="$HOME/fakebin/sdl-config"
           ./autogen.sh
-          emconfigure ./configure --enable-wasm
-          # zkus pribalit memory-growth pres EMCC_CFLAGS i LDFLAGS
-          export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1"
-          emmake make -j2 EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1" 2>&1 | tail -60
+          emconfigure ./configure --enable-wasm SDL_CONFIG="$HOME/fakebin/sdl-config" 2>&1 | tail -25
+          echo "=== MAKE ==="
+          emmake make -j2 EMCC_CFLAGS="-s USE_SDL=1 -s ALLOW_MEMORY_GROWTH=1" 2>&1 | tail -80
+      - name: list outputs
+        run: |
+          cd src-emdosbox && echo "=== .js/.wasm v src ===" && ls -la src/*.js src/*.wasm 2>/dev/null || echo "zatim nic"
       - name: artifact
         uses: actions/upload-artifact@v4
         with:
